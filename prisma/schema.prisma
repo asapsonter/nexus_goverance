@@ -1,0 +1,13 @@
+// RegWatch NG — Prisma schema.
+// Prompt 0 establishes the SQLite datasource + client generator only.
+// The full regulator/public data model (with the confidentiality boundary)
+// is designed in Prompt 2.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
