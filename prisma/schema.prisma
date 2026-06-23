@@ -1,7 +1,21 @@
-// RegWatch NG — Prisma schema.
-// Prompt 0 establishes the SQLite datasource + client generator only.
-// The full regulator/public data model (with the confidentiality boundary)
-// is designed in Prompt 2.
+// RegWatch NG — Prisma schema (SQLite MVP).
+//
+// CONFIDENTIALITY BOUNDARY
+// ------------------------
+// Models split into two trust zones:
+//
+//  * PUBLICLY-SURFACEABLE — carry `visibility` ("internal" | "public") and
+//    `publishedAt`. Nothing is public until BOTH visibility == "public" AND
+//    publishedAt is set. The public portal reads these through
+//    `src/lib/public-data.ts`, which additionally projects away internal fields.
+//
+//  * CONFIDENTIAL — Investigation, Evidence, RemediationAction,
+//    SettlementMilestone, DataSubjectRequest(+events), AuditLog. These have NO
+//    visibility column and are NEVER reachable from the public layer.
+//
+// Note: SQLite does not support Prisma enums, so status/type/role fields are
+// String columns. Their allowed values live as TypeScript literal unions in
+// `src/lib/enums.ts` and are the single source of truth used by seed + app.
 
 generator client {
   provider = "prisma-client-js"
@@ -10,4 +24,416 @@ generator client {
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Reference data
+// ============================================================================
+
+model Sector {
+  id            String            @id @default(cuid())
+  key           String            @unique // "fintech" | "telco" | "health" | "ecommerce" | "gov"
+  name          String
+  description   String?
+  organizations Organization[]
+  trends        ComplianceTrend[]
+  advisories    Advisory[]
+  createdAt     DateTime          @default(now())
+}
+
+// ============================================================================
+// Organizations — PUBLICLY SURFACEABLE (as bands, not raw scores)
+// ============================================================================
+
+model Organization {
+  id       String @id @default(cuid())
+  name     String
+  slug     String @unique
+  sectorId String
+  sector   Sector @relation(fields: [sectorId], references: [id])
+
+  headquarters String?
+
+  // Risk profile. riskScore is INTERNAL detail; the public layer exposes only
+  // riskBand. consentRisk / crossBorderRisk mirror the NDPC fintech example.
+  riskScore       Int    @default(0) // 0–100, internal
+  riskBand        String @default("low") // "low" | "medium" | "high"
+  consentRisk     Int    @default(0) // 0–100, internal
+  crossBorderRisk Int    @default(0) // 0–100, internal
+
+  certified Boolean @default(false)
+
+  // Confidentiality controls.
+  visibility  String    @default("internal") // "internal" | "public"
+  publishedAt DateTime?
+
+  // Relations (all confidential except certifications/advisories which are
+  // independently gated by their own visibility).
+  investigations      Investigation[]
+  complaints          Complaint[]
+  notices             EnforcementNotice[]
+  settlements         Settlement[]
+  dataSubjectRequests DataSubjectRequest[]
+  certifications      Certification[]
+  advisories          Advisory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sectorId])
+  @@index([visibility, publishedAt])
+}
+
+// ============================================================================
+// Compliance trends — PUBLICLY SURFACEABLE (sector-level aggregates only)
+// ============================================================================
+
+model ComplianceTrend {
+  id          String   @id @default(cuid())
+  sectorId    String
+  sector      Sector   @relation(fields: [sectorId], references: [id])
+  period      String // "YYYY-MM"
+  periodStart DateTime
+
+  avgRiskScore    Int // sector aggregate
+  certifiedCount  Int @default(0)
+  openIssues      Int @default(0)
+  consentRisk     Int @default(0)
+  crossBorderRisk Int @default(0)
+
+  visibility  String    @default("internal")
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([sectorId, period])
+  @@index([visibility, publishedAt])
+}
+
+// ============================================================================
+// Investigations & Evidence — CONFIDENTIAL (no visibility column, ever)
+// ============================================================================
+
+model Investigation {
+  id      String       @id @default(cuid())
+  caseRef String       @unique
+  orgId   String
+  org     Organization @relation(fields: [orgId], references: [id])
+
+  title   String
+  status  String // "open" | "active" | "closed"
+  summary String?
+
+  leadOfficerId String?
+  leadOfficer   RegulatorUser? @relation("LeadOfficer", fields: [leadOfficerId], references: [id])
+
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  evidence   Evidence[]
+  complaints Complaint[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([status])
+}
+
+model Evidence {
+  id              String        @id @default(cuid())
+  investigationId String
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+
+  type               String // "document" | "screenshot" | "log" | "testimony" | "dataset"
+  fileRef            String
+  description        String?
+  verificationStatus String  @default("pending") // "pending" | "verified" | "rejected"
+
+  collectedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([investigationId])
+}
+
+// ============================================================================
+// Complaints — PUBLICLY SURFACEABLE only via isPublic + publish gating
+// ============================================================================
+
+model Complaint {
+  id    String       @id @default(cuid())
+  ref   String       @unique
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  channel    String // "web" | "email" | "phone" | "walk_in"
+  subject    String
+  detail     String?
+  status     String // "new" | "triage" | "investigating" | "resolved" | "dismissed"
+  resolution String?
+
+  // isPublic marks a complaint eligible to seed a public advisory; the public
+  // layer never reads complaints directly (warnings come from Advisory).
+  isPublic    Boolean   @default(false)
+  visibility  String    @default("internal")
+  publishedAt DateTime?
+
+  investigationId String?
+  investigation   Investigation? @relation(fields: [investigationId], references: [id])
+
+  assignedToId String?
+  assignedTo   RegulatorUser? @relation("ComplaintAssignee", fields: [assignedToId], references: [id])
+
+  submittedAt DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([status])
+}
+
+// ============================================================================
+// Enforcement notices & remediation
+// ============================================================================
+
+model EnforcementNotice {
+  id    String       @id @default(cuid())
+  ref   String       @unique
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  type    String // "warning" | "compliance_order" | "fine" | "suspension"
+  title   String
+  summary String?
+
+  issuedAt DateTime  @default(now())
+  dueDate  DateTime?
+  status   String // "draft" | "issued" | "acknowledged" | "overdue" | "closed"
+
+  // Notices are publicly surfaceable (enforcement transparency).
+  visibility  String    @default("internal")
+  publishedAt DateTime?
+
+  remediationActions RemediationAction[]
+
+  issuedById String?
+  issuedBy   RegulatorUser? @relation("NoticeIssuer", fields: [issuedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([status])
+}
+
+// Remediation tracking is internal (no public visibility).
+model RemediationAction {
+  id       String            @id @default(cuid())
+  noticeId String
+  notice   EnforcementNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  milestone   String
+  description String?
+  dueDate     DateTime?
+  status      String // "pending" | "in_progress" | "completed" | "overdue"
+  evidenceRef String?
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([noticeId])
+}
+
+// ============================================================================
+// Settlements & milestones (Module 13)
+// ============================================================================
+
+model Settlement {
+  id    String       @id @default(cuid())
+  ref   String       @unique
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  totalFine Float // NGN
+  currency  String @default("NGN")
+  summary   String
+  status    String // "active" | "completed" | "breached"
+
+  // "publishable progress" toggle (Prompt 5). When published, only the
+  // sanitized publicSummary + aggregate progress cross the boundary — never
+  // the underlying milestone evidence.
+  progressPublished Boolean   @default(false)
+  publicSummary     String?
+  // Sanitized progress % snapshot, written at publish time. Lets the public
+  // layer show progress WITHOUT querying confidential milestone evidence.
+  publishedProgress Int?
+  visibility        String    @default("internal")
+  publishedAt       DateTime?
+
+  milestones SettlementMilestone[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+}
+
+// Milestones (incl. evidence) are CONFIDENTIAL.
+model SettlementMilestone {
+  id           String     @id @default(cuid())
+  settlementId String
+  settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  category    String // "hosting" | "consent" | "public_benefit" | "other"
+  deadline    DateTime
+
+  evidenceRef        String?
+  verificationStatus String    @default("pending") // "pending" | "verified" | "rejected"
+  verifiedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([settlementId])
+}
+
+// ============================================================================
+// Data Subject Requests (Module 15) — CONFIDENTIAL
+// ============================================================================
+
+model DataSubjectRequest {
+  id      String       @id @default(cuid())
+  refCode String       @unique
+  orgId   String
+  org     Organization @relation(fields: [orgId], references: [id])
+
+  type   String // "access" | "correction" | "deletion" | "withdrawal"
+  status String // "submitted" | "routed" | "in_progress" | "completed" | "rejected" | "escalated"
+
+  requesterEmailHash String // sha256 — never store the raw email
+  detail             String?
+
+  submittedAt DateTime  @default(now())
+  slaDueAt    DateTime
+  escalated   Boolean   @default(false)
+  escalatedAt DateTime?
+  resolvedAt  DateTime?
+
+  events DataSubjectRequestEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([status])
+  @@index([escalated])
+}
+
+model DataSubjectRequestEvent {
+  id        String             @id @default(cuid())
+  requestId String
+  request   DataSubjectRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  status    String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+}
+
+// ============================================================================
+// Advisories & certifications — PUBLICLY SURFACEABLE
+// ============================================================================
+
+model Advisory {
+  id       String  @id @default(cuid())
+  slug     String  @unique
+  title    String
+  summary  String
+  body     String
+  type     String // "advisory" | "resolved_case" | "warning"
+  severity String? // "info" | "warning" | "critical"
+
+  // Org may be linked, OR anonymized to a display label when the underlying
+  // case must not name the organization.
+  orgId           String?
+  org             Organization? @relation(fields: [orgId], references: [id])
+  orgNameOverride String?
+
+  sectorId String?
+  sector   Sector? @relation(fields: [sectorId], references: [id])
+
+  visibility  String    @default("internal")
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([visibility, publishedAt])
+}
+
+model Certification {
+  id    String       @id @default(cuid())
+  orgId String
+  org   Organization @relation(fields: [orgId], references: [id])
+
+  scheme     String // e.g. "NDPA Compliance Certified"
+  certNumber String    @unique
+  status     String // "active" | "expired" | "revoked"
+  issuedAt   DateTime  @default(now())
+  expiresAt  DateTime?
+
+  visibility  String    @default("internal")
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([visibility, publishedAt])
+}
+
+// ============================================================================
+// Staff & audit — CONFIDENTIAL
+// ============================================================================
+
+model RegulatorUser {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  name         String
+  role         String // "superadmin" | "investigator" | "analyst" | "settlement_officer" | "read_only"
+  passwordHash String
+  active       Boolean @default(true)
+
+  ledInvestigations  Investigation[]     @relation("LeadOfficer")
+  assignedComplaints Complaint[]         @relation("ComplaintAssignee")
+  issuedNotices      EnforcementNotice[] @relation("NoticeIssuer")
+  auditLogs          AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorId    String?
+  actor      RegulatorUser? @relation(fields: [actorId], references: [id])
+  actorEmail String? // denormalized for durability
+
+  action     String // e.g. "evidence.view" | "notice.issue" | "settlement.verify"
+  entityType String
+  entityId   String
+  metadata   String? // JSON string
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType, entityId])
 }

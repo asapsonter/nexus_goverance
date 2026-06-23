@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RegWatch NG
 
-## Getting Started
+An NDPC (Nigeria Data Protection Commission) **regulator console** and **public
+transparency platform** in one Next.js app, separated by a hard confidentiality
+boundary.
 
-First, run the development server:
+- **Console** (`/(console)`) — authenticated NDPC staff: dashboard,
+  investigations, complaints, notices, remediation, settlements (Modules 12 & 13).
+- **Public** (`/(public)`) — citizens, no auth: transparency portal and the data
+  subject rights portal (Modules 14 & 15).
+
+## Stack
+
+Next.js 16 (App Router) · TypeScript (strict) · Tailwind v4 · Prisma + SQLite ·
+Recharts · Vitest. Path alias `@/` → `./src`.
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+cp .env.example .env          # then set AUTH_SECRET (openssl rand -hex 32)
+pnpm db:migrate               # apply migrations, create prisma/dev.db
+pnpm db:seed                  # load the fictional Nigerian dataset
+pnpm dev                      # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `db:migrate`, `db:seed`,
+`db:reset`, `db:generate`. Health check: `GET /api/health`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> If `tsx`/`vitest` hit `EACCES … mkdir … /T/` in a sandboxed shell, prefix with
+> `TMPDIR="$PWD/.tmp"`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Demo accounts (password `RegWatch#2026`)
 
-## Learn More
+| Email | Role |
+|---|---|
+| aisha.bello@ndpc.gov.ng | superadmin |
+| chidi.okeke@ndpc.gov.ng | investigator |
+| ngozi.eze@ndpc.gov.ng | analyst |
+| tunde.adeyemi@ndpc.gov.ng | settlement_officer |
+| fatima.sani@ndpc.gov.ng | read_only |
 
-To learn more about Next.js, take a look at the following resources:
+## The confidentiality boundary
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Every model that can ever be public carries `visibility` (`internal` | `public`)
+and `publishedAt`. **Nothing is public unless `visibility = "public"` AND
+`publishedAt != null`.** Default is `internal`, so data is private by default.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Read side — `src/lib/public-data.ts`.** The public portal reads *only* through
+this module. Two enforced guarantees:
 
-## Deploy on Vercel
+1. **Compile-time** — `publicReader` is typed `Pick<PrismaClient, …>` exposing
+   only safe delegates (`organization`, `sector`, `complianceTrend`, `advisory`,
+   `certification`, `settlement`). Confidential delegates (`investigation`,
+   `evidence`, `complaint`, `settlementMilestone`, `dataSubjectRequest`,
+   `remediationAction`, `auditLog`, `regulatorUser`) are absent from its type —
+   `publicReader.evidence` does not compile.
+2. **Runtime** — every query filters published rows and projects to DTOs that
+   omit internal fields (raw `riskScore` → coarse `riskBand`; settlement progress
+   → a sanitized `publishedProgress` snapshot, never milestone evidence).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Write side — `src/lib/publish.ts`.** The only path that makes internal records
+public. Each `publish*` action sets `visibility/publishedAt` and copies across
+*only* safe fields (it never copies evidence or complainant identity), and is
+audit-logged.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### What becomes public, exactly
+
+| Model | Public fields (via DTO) | Never public |
+|---|---|---|
+| Organization | name, sector, **riskBand**, certified | riskScore, consentRisk, crossBorderRisk |
+| ComplianceTrend | sector, period, avg score (aggregate) | — |
+| Certification | scheme, certNumber, status, dates | — |
+| Advisory | title, summary, type, severity, sector, display label | linked org identity unless overridden |
+| Settlement | org, **publicSummary**, **publishedProgress %**, status | totalFine, milestones, evidence |
+| Investigation / Evidence / Complaint / DSR | **nothing** | everything |
+
+## Auth, roles & audit
+
+Email + password (bcrypt) with an HMAC-signed session cookie (`src/lib/auth`).
+`src/proxy.ts` redirects unauthenticated console requests to `/login`. RBAC via
+`can(user, action)` across 5 roles (e.g. an analyst cannot issue notices).
+Sensitive actions — viewing evidence, issuing notices, verifying settlement
+evidence — write `AuditLog` rows.
+
+## Tests
+
+```bash
+pnpm test
+```
+
+Boundary tests assert the public layer returns no internal rows, the
+internal-only org/advisory/settlement never surface, confidential delegates are
+unreachable, RBAC blocks analysts from issuing notices, evidence views are
+audited, settlement progress is computed correctly, and overdue DSRs escalate.

@@ -1,26 +1,225 @@
 @import "tailwindcss";
 
+/*
+ * RegWatch NG — design system.
+ *
+ * National identity is expressed entirely through CSS custom properties so the
+ * platform can be re-skinned for another country by editing the raw palette
+ * block alone (--ng-*). Everything downstream references *semantic* tokens
+ * (--primary, --accent, --header, …), never the raw colours directly.
+ *
+ * Two themes, both scoped via custom properties (the datanexus pattern):
+ *  - :root / .theme-console — the authoritative, government-grade console.
+ *    Nigerian green primary on white surfaces, a deep-forest header, and a
+ *    restrained gold accent reserved for emphasis.
+ *  - .theme-public — the citizen-facing portal. Same identity, tuned for
+ *    accessibility: larger base type, more generous line-height, and a darker
+ *    body ink so text clears WCAG AA comfortably.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* ----- Raw national palette (the only place to edit when re-skinning) ----- */
+  --ng-green: #008751; /* Nigerian flag green — AA on white for normal text */
+  --ng-green-600: #017045; /* hover / pressed */
+  --ng-green-900: #052e1c; /* deep forest — header surface */
+  --ng-white: #ffffff;
+  --ng-gold: #b58a00; /* restrained accent — emphasis only */
+  --ng-gold-600: #9a7400;
+  --ng-ink: #0e1a14; /* near-black with a faint green undertone */
+
+  --radius: 0.5rem;
+
+  /* ----- Semantic tokens: CONSOLE theme (default) ----- */
+  --background: var(--ng-white);
+  --foreground: var(--ng-ink);
+
+  --card: var(--ng-white);
+  --card-foreground: var(--ng-ink);
+
+  --popover: var(--ng-white);
+  --popover-foreground: var(--ng-ink);
+
+  --primary: var(--ng-green);
+  --primary-hover: var(--ng-green-600);
+  --primary-foreground: var(--ng-white);
+
+  --secondary: #eef5f1; /* faint green-tinted surface */
+  --secondary-foreground: #1c3328;
+
+  --muted: #f2f6f4;
+  --muted-foreground: #51635a; /* 5.0:1 on white — AA normal text */
+
+  --accent: var(--ng-gold);
+  --accent-foreground: var(--ng-white);
+  --accent-ink: #5c4600; /* gold-as-text, AA on white for emphasis labels */
+
+  --destructive: #c0362c; /* "issue counts are red" convention */
+  --destructive-foreground: var(--ng-white);
+
+  --success: var(--ng-green);
+  --success-foreground: var(--ng-white);
+
+  --warning: #a76a00;
+  --warning-foreground: var(--ng-white);
+
+  --border: #e0e8e3;
+  --input: #d7e0db;
+  --ring: var(--ng-green);
+
+  /* Deep-forest header chrome, shared by both themes. */
+  --header: var(--ng-green-900);
+  --header-foreground: #f3f7f4;
+  --header-muted: #a7c0b3;
+  --header-accent: var(--ng-gold);
+
+  /* Flag stripe segments. */
+  --flag-green: var(--ng-green);
+  --flag-white: var(--ng-white);
+
+  /* Typographic scale base — overridden by the public theme. */
+  --type-base: 1rem;
+  --type-leading: 1.55;
+}
+
+/* Explicit console scope (mirrors :root so a wrapper can opt in by name). */
+.theme-console {
+  color-scheme: light;
+}
+
+/*
+ * PUBLIC theme — trustworthy and high-accessibility.
+ * Larger base type + looser leading + a darker body ink for AA headroom.
+ */
+.theme-public {
+  color-scheme: light;
+
+  --foreground: #0a1410; /* darker ink — maximum legibility */
+  --muted-foreground: #41524a; /* 6.3:1 on white */
+  --secondary: #eaf4ee;
+  --border: #d8e4dd;
+
+  --type-base: 1.0625rem; /* 17px base */
+  --type-leading: 1.7; /* generous line-height */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-ink: var(--accent-ink);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-header: var(--header);
+  --color-header-foreground: var(--header-foreground);
+  --color-header-muted: var(--header-muted);
+  --color-header-accent: var(--header-accent);
+  --color-flag-green: var(--flag-green);
+  --color-flag-white: var(--flag-white);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-source-serif), ui-serif, Georgia, "Times New Roman",
+    serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--border);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--type-base);
+  line-height: var(--type-leading);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ----- Typographic helpers ----- */
+
+/*
+ * Display headings use the serif face and `em` sizing so the whole scale grows
+ * automatically under the public theme's larger --type-base.
+ */
+.display {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.012em;
+  color: var(--foreground);
+}
+.display-xl {
+  font-size: 2.5em;
+}
+.display-lg {
+  font-size: 2em;
+}
+.display-md {
+  font-size: 1.5em;
+}
+.display-sm {
+  font-size: 1.2em;
+}
+
+/* Small uppercase label used above headings and section titles. */
+.eyebrow {
+  font-size: 0.6875em;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Restrained gold emphasis label — the only routine use of the gold accent. */
+.eyebrow-accent {
+  color: var(--accent-ink);
+}
+
+/* Generous lead paragraph for the public theme. */
+.lead {
+  font-size: 1.125em;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+
+/* Tabular, monospaced figures for scores and metrics. */
+.figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* A faint green wash bleeding from the top of a themed surface, for depth. */
+.surface-wash {
+  background-image: radial-gradient(
+    120% 60% at 50% -10%,
+    color-mix(in oklab, var(--primary) 6%, transparent),
+    transparent 60%
+  );
 }
